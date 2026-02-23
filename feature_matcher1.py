@@ -1,5 +1,4 @@
-from PIL.ImageMath import imagemath_equal
-import cv2 
+import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -7,24 +6,37 @@ import matplotlib.pyplot as plt
 class FeatureMatcher:
 
     def __init__(self, detector_type: str = "SIFT", ratio_threshold: float = 0.7):
+
         self.detector_type = detector_type.upper()
         self.ratio_threshold = ratio_threshold
 
         if self.detector_type == "SIFT":
+
             self.detector = cv2.SIFT_create(
-                nfeatures=8000,
-                n0ctaveLayers = 3,
-                contrastThreshold = 0.04,
-                edgeThreshold = 10,
-                sigma = 1.6
+                nfeatures=8000,           # Cap at 8000 strongest keypoints (was 0=unlimited)
+                nOctaveLayers=3,
+                contrastThreshold=0.04,   # Restored to default — room images are high-contrast
+                edgeThreshold=10,
+                sigma=1.6
             )
             self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
+
+        elif self.detector_type == "ORB":
+            
+            self.detector = cv2.ORB_create(
+                nfeatures=5000,
+                scaleFactor=1.2,
+                nlevels=8,
+                edgeThreshold=31,
+                WTA_K=2
+            )
+            # Hamming norm — correct for binary ORB descriptors via XOR comparison.
+            self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+
         else:
-            raise ValueError(f"Usupported detector_type '{detector_type}")
-    
+            raise ValueError(f"Unsupported detector_type '{detector_type}'. Choose 'SIFT' or 'ORB'.")
 
-
-    def detect_and_match(self, image: np.ndarray) -> tuple:
+    def detect_and_describe(self, image: np.ndarray) -> tuple:
 
         if len(image.shape) == 3:
             gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
@@ -32,35 +44,40 @@ class FeatureMatcher:
             gray = image
 
         keypoints, descriptors = self.detector.detectAndCompute(gray, mask=None)
+        # mask=None → detect features across the entire image.
 
         return keypoints, descriptors
 
-    
-
-
     def match(self, descriptors_a: np.ndarray, descriptors_b: np.ndarray) -> list:
-
+       
         if descriptors_a is None or descriptors_b is None:
-            raise ValueError("Descriptor array is none")
+            raise ValueError("Descriptor array is None. "
+                             "Ensure images contain detectable features.")
 
+        # knnMatch with k=2 returns the 2 closest descriptors in B for each in A.
         raw_matches = self.matcher.knnMatch(descriptors_a, descriptors_b, k=2)
 
         good_matches = []
-
         for match_pair in raw_matches:
+            # Guard: can return < 2 if image B has very few keypoints.
             if len(match_pair) < 2:
                 continue
 
-            best, second_best= match_pair
+            best, second_best = match_pair
 
+            # Lowe's Ratio Test: accept only distinctly better matches.
             if best.distance < self.ratio_threshold * second_best.distance:
                 good_matches.append(best)
 
         return good_matches
 
-    
-    def extract_point_pairs(self, keypoints_a: list, keypoints_b: list, good_matches: list) -> tuple:
-
+    def extract_point_pairs(
+        self,
+        keypoints_a: list,
+        keypoints_b: list,
+        good_matches: list
+    ) -> tuple:
+       
         pts_a = np.float32(
             [keypoints_a[m.queryIdx].pt for m in good_matches]
         ).reshape(-1, 1, 2)
@@ -71,33 +88,63 @@ class FeatureMatcher:
 
         return pts_a, pts_b
 
-    def visualize_matches(image_a: np.ndarray, keypoints_a: list, image_b: np.ndarray, keypoints_b: list, good_matches: list, detector_name: str ='SIFT', ratio_threshold: float = 0.7, max_display:int =100, output_path: str =None) -> None:
 
-        display_matches = good_matches[:max_display]
+# ════════════════════════════════════════════════════════════════════════════
+# Visualization Utility
+# ════════════════════════════════════════════════════════════════════════════
 
-        vis_img = cv2.drawMatches(image_a, keypoints_a, image_b, keypoints_b, display_matches, None, flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+def visualize_matches(
+    image_a: np.ndarray,
+    keypoints_a: list,
+    image_b: np.ndarray,
+    keypoints_b: list,
+    good_matches: list,
+    detector_name: str = "SIFT",
+    ratio_threshold: float = 0.7,
+    max_display: int = 100,
+    output_path: str = None
+) -> None:
+    
+    display_matches = good_matches[:max_display]
 
-        plt.figure(figsize=(15, 10))
-        plt.imshow(cv2.cvtColor(vis_img, cv2.COLOR_BGR2RGB))
-        plt.title(f"Feature Matches ({detector_name}, τ={ratio_threshold})")
-        plt.axis('off')
+    match_image = cv2.drawMatches(
+        image_a, keypoints_a,
+        image_b, keypoints_b,
+        display_matches,
+        outImg=None,
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+    )
 
-        if output_path:
-            plt.savefig(output_path, bbox_inches='tight', dpi=150)
-            print(f"Saved visualization to {output_path}")
-        
-        plt.show()
+    plt.figure(figsize=(20, 8))
+    plt.imshow(cv2.cvtColor(match_image, cv2.COLOR_BGR2RGB))
+    plt.title(
+        f"{detector_name} Feature Matching — Lowe's Ratio Test (τ={ratio_threshold})\n"
+        f"Showing {len(display_matches)} of {len(good_matches)} good matches",
+        fontsize=13
+    )
+    plt.axis("off")
 
-        return vis_img
+    if output_path:
+        plt.savefig(output_path, bbox_inches="tight", dpi=150)
+        print(f"[INFO] Match visualization saved to: {output_path}")
+
+    plt.show()
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Quick Demo  (run as: python feature_matcher.py)
+# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
 
-    DETECTOR = "SIFT"
-    RATIO = 0.7
+    # ── Choose detector: "SIFT" or "ORB" ─────────────────────────────────
+    DETECTOR = "SIFT"          # Change to "ORB" to benchmark the alternative
+    RATIO    = 0.7             # 0.7 for SIFT | 0.75 for ORB
 
     path_a = "/Users/Antino/Desktop/Image Stitcher/images/left_room.jpg"
-    path_b = "/Users/Antino/Desktop/Image Stitcher/images/right_room.jpg" 
+    path_b = "/Users/Antino/Desktop/Image Stitcher/images/right_room.jpg"
+
     img_a = cv2.imread(path_a)
     img_b = cv2.imread(path_b)
 
@@ -110,7 +157,7 @@ if __name__ == "__main__":
 
     matcher = FeatureMatcher(detector_type=DETECTOR, ratio_threshold=RATIO)
 
-     print(f"[Step 1a] Detecting {DETECTOR} keypoints and computing descriptors...")
+    print(f"[Step 1a] Detecting {DETECTOR} keypoints and computing descriptors...")
     kps_a, desc_a = matcher.detect_and_describe(img_a)
     kps_b, desc_b = matcher.detect_and_describe(img_b)
     print(f"          Image A → {len(kps_a)} keypoints")
