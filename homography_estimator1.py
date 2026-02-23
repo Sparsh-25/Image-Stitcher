@@ -122,7 +122,7 @@ class HomographyEstimator:
 
 if __name__ == "__main__":
     import sys
-    from feature_matcher import FeatureMatcher, visualize_matches
+    from feature_matcher1 import FeatureMatcher, visualize_matches
 
     path_a = "/Users/Antino/Desktop/Image Stitcher/images/left_room.jpg"
     path_b = "/Users/Antino/Desktop/Image Stitcher/images/right_room.jpg"
