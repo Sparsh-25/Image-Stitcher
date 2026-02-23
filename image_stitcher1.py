@@ -1,17 +1,27 @@
+
 import cv2
 import numpy as np
 import matplotlib.pyplot as plt
 
-class ImageStitcher:
-    def __init__(self, interpolation: int = cv2.INTER_LINEAR):
 
+class ImageStitcher:
+
+
+    def __init__(self, interpolation: int = cv2.INTER_LINEAR):
+   
         self.interpolation = interpolation
 
-    def _compute_canvas_size(self, img_a: np.ndarray, img_b: np.ndarray, H: np.ndarray) -> tuple:
-
+    def _compute_canvas_size(
+        self,
+        img_a: np.ndarray,
+        img_b: np.ndarray,
+        H: np.ndarray
+    ) -> tuple:
+        
         h_a, w_a = img_a.shape[:2]
         h_b, w_b = img_b.shape[:2]
 
+        # The 4 corners of Image A in homogeneous coordinates (shape: 4×1×2).
         corners_a = np.float32([
             [0,      0    ],
             [w_a-1,  0    ],
@@ -19,8 +29,11 @@ class ImageStitcher:
             [w_a-1,  h_a-1]
         ]).reshape(-1, 1, 2)
 
-        projected = cv2.perspectiveTransform(corners_a, H)
+        # Project Image A's corners through H into Image B's coordinate frame.
+        # perspectiveTransform applies H and normalizes by w (homogeneous division).
+        projected = cv2.perspectiveTransform(corners_a, H)  # shape: (4, 1, 2)
 
+        # Image B's corners in its own coordinate frame (no transform needed).
         corners_b = np.float32([
             [0,      0    ],
             [w_b-1,  0    ],
@@ -28,16 +41,22 @@ class ImageStitcher:
             [w_b-1,  h_b-1]
         ]).reshape(-1, 1, 2)
 
+        # Combine all corners to get the full bounding box of the panorama.
         all_corners = np.concatenate([projected, corners_b], axis=0)
-        x_min, y_min = all_corners[;, 0, :].min(axis=0)
-        x_max, y_max = all_corners[;, 0, :].max(axis=0)
 
+        x_min, y_min = all_corners[:, 0, :].min(axis=0)
+        x_max, y_max = all_corners[:, 0, :].max(axis=0)
+
+        # If any coordinate is negative, we need to shift everything right/down
+        # by (|x_min|, |y_min|) so the top-left of the canvas is (0, 0).
         offset_x = max(0, -x_min)
         offset_y = max(0, -y_min)
 
         canvas_w = int(np.ceil(x_max + offset_x)) + 1
         canvas_h = int(np.ceil(y_max + offset_y)) + 1
 
+        # Translation matrix T: shifts all warped coordinates by (offset_x, offset_y).
+        # We compose T @ H so that warpPerspective applies both in one pass.
         T = np.array([
             [1, 0, offset_x],
             [0, 1, offset_y],
@@ -45,15 +64,21 @@ class ImageStitcher:
         ], dtype=np.float64)
 
         return canvas_w, canvas_h, T, int(offset_x), int(offset_y)
-        
 
-    def stitch(self, img_a: np.ndarray, img_b: np.ndarray, H: np.ndarray) -> np.ndarray:
-        
+    def stitch(
+        self,
+        img_a: np.ndarray,
+        img_b: np.ndarray,
+        H: np.ndarray
+    ) -> np.ndarray:
+    
+
         h_b, w_b = img_b.shape[:2]
         canvas_w, canvas_h, T, off_x, off_y = self._compute_canvas_size(img_a, img_b, H)
 
         print(f"         Canvas size : {canvas_w} x {canvas_h} px")
         print(f"         Offset (x,y): ({off_x}, {off_y}) px  ← translation compensation")
+
         
         TH = T @ H
 
@@ -65,15 +90,18 @@ class ImageStitcher:
             borderMode=cv2.BORDER_CONSTANT,
             borderValue=(0, 0, 0)
         )
-        
+
+       
         panorama = warped_a.copy()
         panorama[off_y:off_y+h_b, off_x:off_x+w_b] = img_b
+
+       
 
         return panorama
 
 
     def crop_black_borders(self, panorama: np.ndarray) -> np.ndarray:
-
+     
         # Convert to grayscale and threshold to find non-black pixels.
         gray = cv2.cvtColor(panorama, cv2.COLOR_BGR2GRAY)
 
@@ -88,7 +116,9 @@ class ImageStitcher:
         return panorama[row_start:row_end+1, col_start:col_end+1]
 
 
-
+# ════════════════════════════════════════════════════════════════════════════
+# Visualization Utility
+# ════════════════════════════════════════════════════════════════════════════
 
 def visualize_panorama(
     panorama: np.ndarray,
@@ -100,7 +130,7 @@ def visualize_panorama(
     plt.figure(figsize=(18, 6))
     plt.imshow(cv2.cvtColor(panorama, cv2.COLOR_BGR2RGB))
     plt.title(
-        f"Phase 1 — Basic Panoramic Stitch (Naive Canvas + Hard Overwrite)\n"
+        f"Phase 1 — Basic Panoramic Stitch\n"
         f"Output Resolution: {w} x {h} px",
         fontsize=13
     )
@@ -113,6 +143,9 @@ def visualize_panorama(
     plt.show()
 
 
+# ════════════════════════════════════════════════════════════════════════════
+# Quick Demo  (run as: python image_stitcher.py)
+# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
@@ -164,5 +197,4 @@ if __name__ == "__main__":
 
     visualize_panorama(panorama_cropped, output_path="panorama_step3_plot.png")
 
-    print("\n[✓] Step 3 Complete — Phase 1 MVP is done!")
-    print("     Next → Phase 2 Complexities (Cylindrical Projection, Laplacian Blending, etc.)")
+

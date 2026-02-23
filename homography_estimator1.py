@@ -5,25 +5,27 @@ import matplotlib.pyplot as plt
 
 class HomographyEstimator:
 
-    def __init__(self, max_reproj_error: 5.0, confidence: float = 0.999):
-
+    def __init__(self, max_reproj_error: float = 5.0, confidence: float = 0.999):
+    
         self.max_reproj_error = max_reproj_error
         self.confidence = confidence
 
-    
-    def estimate(self, pts_a: np.ndarray, pts_b: np.ndarray) ->tuple:
-
+    def estimate(self, pts_a: np.ndarray, pts_b: np.ndarray) -> tuple:
+        
         if len(pts_a) < 4:
-            raise ValueError(f"Need at least 4 point pairs to compute a homography. "
-                f"Got {len(pts_a)}. Add more images or lower Lowe's ratio threshold.")
+            raise ValueError(
+                f"Need at least 4 point pairs to compute a homography. "
+                f"Got {len(pts_a)}. Add more images or lower Lowe's ratio threshold."
+            )
+
 
         H, mask = cv2.findHomography(
-            srcPoints = pts_a,
-            dstPoints = pts_b,
-            method = cv2.USAC_MAGSAC,
+            srcPoints=pts_a,
+            dstPoints=pts_b,
+            method=cv2.USAC_MAGSAC,
             ransacReprojThreshold=self.max_reproj_error,
             confidence=self.confidence,
-            maxIters=5000     
+            maxIters=5000
         )
 
         if H is None:
@@ -34,24 +36,50 @@ class HomographyEstimator:
 
         return H, mask
 
+    def get_inlier_points(
+        self,
+        pts_a: np.ndarray,
+        pts_b: np.ndarray,
+        mask: np.ndarray
+    ) -> tuple:
+        
+        # mask.ravel() converts (N,1) → (N,) for boolean indexing.
+        inlier_mask = mask.ravel().astype(bool)
+        return pts_a[inlier_mask], pts_b[inlier_mask]
 
-    def get_inlier_points(self, pts_a: np.ndarray, pts_b: np.ndarray, mask: np.ndarray) -> tuple:
-
+    def compute_reprojection_errors(
+        self,
+        pts_a: np.ndarray,
+        pts_b: np.ndarray,
+        H: np.ndarray,
+        mask: np.ndarray
+    ) -> dict:
+        
         inliers_a, inliers_b = self.get_inlier_points(pts_a, pts_b, mask)
 
-        projected = cv2.perspectiveTransform(inliers_a, H)
+        # cv2.perspectiveTransform applies H to each point in inliers_a.
+        # It handles the homogeneous division internally:
+        #   [x', y', w']ᵀ = H · [x, y, 1]ᵀ
+        #   result = (x'/w', y'/w')
+        projected = cv2.perspectiveTransform(inliers_a, H)  # shape (N, 1, 2)
 
-        errors = np.linalg.norm(projected - inliers_b, axis=2)
+        # L2 distance between projected point and actual point in Image B.
+        errors = np.linalg.norm(inliers_b - projected, axis=2).ravel()
 
         return {
-            'mean_error': np.mean(errors),
-            'max_error': np.max(errors),
-            'errors': errors,
-            'total_count': len(pts_a),
-            'inlier_ratio' : float(mask.sum())/len(pts_a)
+            "mean_error":   float(np.mean(errors)),
+            "max_error":    float(np.max(errors)),
+            "inlier_count": int(mask.sum()),
+            "total_count":  len(pts_a),
+            "inlier_ratio": float(mask.sum()) / len(pts_a)
         }
 
-    def visualize_inliers(
+
+# ════════════════════════════════════════════════════════════════════════════
+# Visualization Utilities
+# ════════════════════════════════════════════════════════════════════════════
+
+def visualize_inliers(
     image_a: np.ndarray,
     image_b: np.ndarray,
     pts_a: np.ndarray,
@@ -59,66 +87,63 @@ class HomographyEstimator:
     mask: np.ndarray,
     output_path: str = None
 ) -> None:
-    """
-    Draw inlier (green) and outlier (red) correspondences side-by-side.
+   
+    h_a, w_a = image_a.shape[:2]
+    h_b, w_b = image_b.shape[:2]
 
-    Args:
-        image_a, image_b: Source images (BGR).
-        pts_a, pts_b:     Full point arrays (N, 1, 2).
-        mask:             Inlier mask (N, 1) from MAGSAC++.
-        output_path:      Optional path to save the figure.
-    """
-        h_a, w_a = image_a.shape[:2]
-        h_b, w_b = image_b.shape[:2]
+    # Create a side-by-side canvas.
+    canvas_h = max(h_a, h_b)
+    canvas   = np.zeros((canvas_h, w_a + w_b, 3), dtype=np.uint8)
+    canvas[:h_a, :w_a]      = image_a
+    canvas[:h_b, w_a:w_a+w_b] = image_b
 
-        # Create a side-by-side canvas.
-        canvas_h = max(h_a, h_b)
-        canvas   = np.zeros((canvas_h, w_a + w_b, 3), dtype=np.uint8)
-        canvas[:h_a, :w_a]      = image_a
-        canvas[:h_b, w_a:w_a+w_b] = image_b
+    inlier_mask = mask.ravel().astype(bool)
 
-        inlier_mask = mask.ravel().astype(bool)
+    for i, (pa, pb) in enumerate(zip(pts_a.reshape(-1, 2), pts_b.reshape(-1, 2))):
+        pt_a = (int(pa[0]),        int(pa[1]))
+        pt_b = (int(pb[0]) + w_a, int(pb[1]))  # offset B by width of A
 
-        for i, (pa, pb) in enumerate(zip(pts_a.reshape(-1, 2), pts_b.reshape(-1, 2))):
-            pt_a = (int(pa[0]),        int(pa[1]))
-            pt_b = (int(pb[0]) + w_a, int(pb[1]))  # offset B by width of A
+        color  = (0, 220, 0) if inlier_mask[i] else (0, 0, 220)  # Green / Red
+        radius = 4            if inlier_mask[i] else 3
 
-            color  = (0, 220, 0) if inlier_mask[i] else (0, 0, 220)  # Green / Red
-            radius = 4            if inlier_mask[i] else 3
+        cv2.circle(canvas, pt_a, radius, color, -1)
+        cv2.circle(canvas, pt_b, radius, color, -1)
+        cv2.line(canvas, pt_a, pt_b, color, 1)
 
-            cv2.circle(canvas, pt_a, radius, color, -1)
-            cv2.circle(canvas, pt_b, radius, color, -1)
-            cv2.line(canvas, pt_a, pt_b, color, 1)
-
-        plt.figure(figsize=(20, 8))
-        plt.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
-        inlier_count  = int(inlier_mask.sum())
-        outlier_count = len(inlier_mask) - inlier_count
-        plt.title(
-            f"MAGSAC++ Inlier/Outlier Classification\n"
-            f"Inliers (green): {inlier_count}   Outliers (red): {outlier_count}",
-            fontsize=13
-        )
-        plt.axis("off")
-        if output_path:
-            plt.savefig(output_path, bbox_inches="tight", dpi=150)
-            print(f"[INFO] Inlier visualization saved to: {output_path}")
-        plt.show()
+    plt.figure(figsize=(20, 8))
+    plt.imshow(cv2.cvtColor(canvas, cv2.COLOR_BGR2RGB))
+    inlier_count  = int(inlier_mask.sum())
+    outlier_count = len(inlier_mask) - inlier_count
+    plt.title(
+        f"MAGSAC++ Inlier/Outlier Classification\n"
+        f"Inliers (green): {inlier_count}   Outliers (red): {outlier_count}",
+        fontsize=13
+    )
+    plt.axis("off")
+    if output_path:
+        plt.savefig(output_path, bbox_inches="tight", dpi=150)
+        print(f"[INFO] Inlier visualization saved to: {output_path}")
+    plt.show()
 
 
-    def print_homography_report(H: np.ndarray, stats: dict) -> None:
-        """Pretty-print the estimated homography matrix and validation statistics."""
-        print("\n" + "═" * 55)
-        print("  HOMOGRAPHY MATRIX  H  (maps Image A → Image B)")
-        print("═" * 55)
-        for row in H:
-            print(f"  [ {row[0]:+10.5f}  {row[1]:+10.5f}  {row[2]:+10.5f} ]")
-        print("═" * 55)
-        print(f"  Inliers          : {stats['inlier_count']} / {stats['total_count']}"
-              f"  ({stats['inlier_ratio']*100:.1f}%)")
-        print(f"  Mean Reproj. Err : {stats['mean_error']:.3f} px")
-        print(f"  Max  Reproj. Err : {stats['max_error']:.3f} px")
-        print("═" * 55 + "\n")
+def print_homography_report(H: np.ndarray, stats: dict) -> None:
+    """Pretty-print the estimated homography matrix and validation statistics."""
+    print("\n" + "═" * 55)
+    print("  HOMOGRAPHY MATRIX  H  (maps Image A → Image B)")
+    print("═" * 55)
+    for row in H:
+        print(f"  [ {row[0]:+10.5f}  {row[1]:+10.5f}  {row[2]:+10.5f} ]")
+    print("═" * 55)
+    print(f"  Inliers          : {stats['inlier_count']} / {stats['total_count']}"
+          f"  ({stats['inlier_ratio']*100:.1f}%)")
+    print(f"  Mean Reproj. Err : {stats['mean_error']:.3f} px")
+    print(f"  Max  Reproj. Err : {stats['max_error']:.3f} px")
+    print("═" * 55 + "\n")
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# Quick Demo  (run as: python homography_estimator.py)
+# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
