@@ -116,9 +116,6 @@ class ImageStitcher:
         return panorama[row_start:row_end+1, col_start:col_end+1]
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Visualization Utility
-# ════════════════════════════════════════════════════════════════════════════
 
 def visualize_panorama(
     panorama: np.ndarray,
@@ -143,9 +140,6 @@ def visualize_panorama(
     plt.show()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Quick Demo  (run as: python image_stitcher.py)
-# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys
@@ -192,9 +186,9 @@ if __name__ == "__main__":
     print(f"         Raw canvas   : {w_raw} x {h_raw} px")
     print(f"         After crop   : {w_out} x {h_out} px")
 
-    cv2.imwrite("panorama_step3.jpg", panorama_cropped)
-    print("[INFO] Panorama saved to: panorama_step3.jpg")
+    cv2.imwrite("final_panorama.jpg", panorama_cropped)
+    print("[INFO] Panorama saved to: final_panorama.jpg")
 
-    visualize_panorama(panorama_cropped, output_path="panorama_step3_plot.png")
+    visualize_panorama(panorama_cropped, output_path="final_panorama_plot.png")
 
 

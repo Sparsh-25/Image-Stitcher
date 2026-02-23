@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 class HomographyEstimator:
 
-    def __init__(self, max_reproj_error: float = 5.0, confidence: float = 0.999):
+    def __init__(self, max_reproj_error: float = 5.0, confidence: float = 0.999):    #Initializes parameters that control how strict RANSAC (MAGSAC++) will be while estimating homography.
     
         self.max_reproj_error = max_reproj_error
         self.confidence = confidence
@@ -23,9 +23,9 @@ class HomographyEstimator:
             srcPoints=pts_a,
             dstPoints=pts_b,
             method=cv2.USAC_MAGSAC,
-            ransacReprojThreshold=self.max_reproj_error,
-            confidence=self.confidence,
-            maxIters=5000
+            ransacReprojThreshold=self.max_reproj_error,   # large = outlier, small = inlier, pixels of mismatch
+            confidence=self.confidence,                    # probability that the algorithm will find a solution
+            maxIters=5000                                  # maximum number of iterations
         )
 
         if H is None:
@@ -75,9 +75,6 @@ class HomographyEstimator:
         }
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Visualization Utilities
-# ════════════════════════════════════════════════════════════════════════════
 
 def visualize_inliers(
     image_a: np.ndarray,
@@ -141,9 +138,6 @@ def print_homography_report(H: np.ndarray, stats: dict) -> None:
     print("═" * 55 + "\n")
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Quick Demo  (run as: python homography_estimator.py)
-# ════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     import sys

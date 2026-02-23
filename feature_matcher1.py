@@ -13,28 +13,17 @@ class FeatureMatcher:
         if self.detector_type == "SIFT":
 
             self.detector = cv2.SIFT_create(
-                nfeatures=8000,           # Cap at 8000 strongest keypoints (was 0=unlimited)
-                nOctaveLayers=3,
-                contrastThreshold=0.04,   # Restored to default — room images are high-contrast
-                edgeThreshold=10,
-                sigma=1.6
+                nfeatures=8000,           # Cap at 8000 strongest keypoints
+                nOctaveLayers=3,            #Downsample images
+                contrastThreshold=0.04,   # Restored to default — room images are high-contrast removes weak features
+                edgeThreshold=10,           # Removes edge features
+                sigma=1.6                   # Smooths the image / Initial gaussian blur
             )
-            self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False)
+            self.matcher = cv2.BFMatcher(cv2.NORM_L2, crossCheck=False) # L2 distance for SIFT descriptors/ creating a matching engine
 
-        elif self.detector_type == "ORB":
-            
-            self.detector = cv2.ORB_create(
-                nfeatures=5000,
-                scaleFactor=1.2,
-                nlevels=8,
-                edgeThreshold=31,
-                WTA_K=2
-            )
-            # Hamming norm — correct for binary ORB descriptors via XOR comparison.
-            self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
         else:
-            raise ValueError(f"Unsupported detector_type '{detector_type}'. Choose 'SIFT' or 'ORB'.")
+            raise ValueError(f"Unsupported detector_type '{detector_type}'. Choose 'SIFT'.")
 
     def detect_and_describe(self, image: np.ndarray) -> tuple:
 
@@ -81,7 +70,8 @@ class FeatureMatcher:
         pts_a = np.float32(
             [keypoints_a[m.queryIdx].pt for m in good_matches]
         ).reshape(-1, 1, 2)
-
+                                                                 #queryIdx → index of the keypoint in the first image (image A)
+                                                                 #trainIdx → index of the keypoint in the second image (image B)
         pts_b = np.float32(
             [keypoints_b[m.trainIdx].pt for m in good_matches]
         ).reshape(-1, 1, 2)
@@ -112,7 +102,7 @@ def visualize_matches(
         image_b, keypoints_b,
         display_matches,
         outImg=None,
-        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS
+        flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS #Draws only lines connecting the matched keypoints
     )
 
     plt.figure(figsize=(20, 8))
@@ -131,16 +121,12 @@ def visualize_matches(
     plt.show()
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Quick Demo  (run as: python feature_matcher.py)
-# ════════════════════════════════════════════════════════════════════════════
-
 if __name__ == "__main__":
     import sys
 
-    # ── Choose detector: "SIFT" or "ORB" ─────────────────────────────────
-    DETECTOR = "SIFT"          # Change to "ORB" to benchmark the alternative
-    RATIO    = 0.7             # 0.7 for SIFT | 0.75 for ORB
+
+    DETECTOR = "SIFT"          
+    RATIO    = 0.7             
 
     path_a = "/Users/Antino/Desktop/Image Stitcher/images/left_room.jpg"
     path_b = "/Users/Antino/Desktop/Image Stitcher/images/right_room.jpg"
