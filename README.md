@@ -212,7 +212,4 @@ H_global[0]  : (-1126.3, -285.0)  ← left of anchor
 H_global[1]  : (0.0, 0.0)         ← anchor (middle image)
 H_global[2]  : (+852.9, +81.2)    ← right of anchor
 ```
-
 ---
-
-*Classical Computer Vision project — 3rd Year AIML undergraduate*

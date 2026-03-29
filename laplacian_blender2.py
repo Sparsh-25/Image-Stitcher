@@ -88,63 +88,70 @@ def match_exposure(src: np.ndarray, ref: np.ndarray) -> np.ndarray:
 def build_blend_mask(
     canvas_shape: tuple,
     warped_a: np.ndarray,
-    canvas_b: np.ndarray
+    canvas_b: np.ndarray,
+    seam_band_px: int = 0,
 ) -> np.ndarray:
     """
-    Build a float32 gradient blend mask for the panorama canvas.
+    Build a float32 blend mask for the panorama canvas.
 
-    Returns mask M of shape (H, W) where:
-      M = 0.0  in Image A-only zone   (warped_a has pixels, canvas_b is black)
-      M = 1.0  in Image B-only zone   (canvas_b has pixels, warped_a is black)
-      M = linear 0→1  in overlap zone (both images have pixels)
+    Finds the optimal seam column (minimum mean absolute difference over the
+    overlap zone, fully vectorised) and places a narrow gradient there.
+    seam_band_px=0 gives a hard binary cut at the optimal column.
 
-    The gradient is along the X-axis (columns), which matches the left-right
-    stitching direction.
-
-    Args:
-        canvas_shape: (H, W[, C]) of the full canvas.
-        warped_a:     Canvas-sized BGR image of Image A warped; black elsewhere.
-        canvas_b:     Canvas-sized BGR image of Image B placed; black elsewhere.
-
-    Returns:
-        float32 array of shape (H, W), values in [0.0, 1.0].
+    M = 0 in A-only zone, 1 in B-only zone.
+    Direction (gradient 0->1 or 1->0) is auto-detected.
     """
     H, W = canvas_shape[:2]
 
-    # Presence maps: True where the image has actual (non-black) pixel data.
-    # cvtColor + >0 is faster than checking all 3 channels individually.
-    gray_a = cv2.cvtColor(warped_a, cv2.COLOR_BGR2GRAY)
-    gray_b = cv2.cvtColor(canvas_b, cv2.COLOR_BGR2GRAY)
-    has_a  = gray_a > 0   # (H, W) bool — True where Image A has data
-    has_b  = gray_b > 0   # (H, W) bool — True where Image B has data
+    gray_a = cv2.cvtColor(warped_a, cv2.COLOR_BGR2GRAY).astype(np.float32)
+    gray_b = cv2.cvtColor(canvas_b,  cv2.COLOR_BGR2GRAY).astype(np.float32)
+    has_a  = gray_a > 0
+    has_b  = gray_b > 0
 
-    # Overlap columns: any column where BOTH images have at least one pixel.
-    both_col     = (has_a & has_b).any(axis=0)   # (W,) bool
+    # Base mask: 1 everywhere B has content, 0 elsewhere.
+    mask = has_b.astype(np.float32)
+
+    both_col     = (has_a & has_b).any(axis=0)
     overlap_cols = np.where(both_col)[0]
-
     if len(overlap_cols) == 0:
-        # No vertical overlap found — fallback to binary mask.
-        mask = np.zeros((H, W), dtype=np.float32)
-        mask[has_b] = 1.0
         return mask
 
-    col_left  = int(overlap_cols[0])    # First overlapping column index
-    col_right = int(overlap_cols[-1])   # Last overlapping column index
-    overlap_w = max(col_right - col_left, 1)
+    col_left  = int(overlap_cols[0])
+    col_right = int(overlap_cols[-1])
 
-    # Build a (W,) gradient vector:
-    #   cols left of overlap  → 0.0
-    #   cols in overlap       → linearly 0.0 → 1.0
-    #   cols right of overlap → 1.0
-    col_idx  = np.arange(W, dtype=np.float32)
-    gradient = np.clip((col_idx - col_left) / overlap_w, 0.0, 1.0)
+    # Vectorised optimal seam: per-column mean abs-diff over overlap rows.
+    both_2d = has_a & has_b                        # (H, W) bool
+    diff    = np.abs(gray_a - gray_b)              # (H, W)
+    # Row-count and diff-sum per column (vectorised, no Python loop).
+    n_rows  = both_2d.sum(axis=0).astype(np.float32)     # (W,)
+    sum_diff= (diff * both_2d).sum(axis=0)               # (W,)
+    col_score = np.where(n_rows > 0, sum_diff / np.maximum(n_rows, 1), 1e9)
 
-    # Broadcast (W,) → (H, W) by adding a new axis, then zero out pixels
-    # where Image B has no data (those should stay 0, not get gradient values).
-    mask = gradient[np.newaxis, :] * has_b.astype(np.float32)
+    seam_col = int(col_left + np.argmin(col_score[col_left:col_right + 1]))
 
-    return mask   # shape (H, W), dtype float32
+    # Detect whether B is to the RIGHT or LEFT of A.
+    a_cols   = np.where(has_a.any(axis=0))[0]
+    b_cols   = np.where(has_b.any(axis=0))[0]
+    a_center = int(a_cols.mean()) if len(a_cols) else W // 2
+    b_center = int(b_cols.mean()) if len(b_cols) else W // 2
 
+    half_band  = seam_band_px // 2
+    band_left  = max(0,   seam_col - half_band)
+    band_right = min(W-1, seam_col + half_band)
+    band_w     = max(band_right - band_left, 1)
+
+    col_idx = np.arange(W, dtype=np.float32)
+    if b_center >= a_center:
+        gradient = np.clip((col_idx - band_left) / band_w, 0.0, 1.0)
+    else:
+        gradient = np.clip((band_right - col_idx) / band_w, 0.0, 1.0)
+
+    # Apply gradient only inside the seam band within the overlap zone.
+    in_band = (col_idx >= band_left) & (col_idx <= band_right)
+    in_seam = in_band[np.newaxis, :] * both_2d
+
+    mask = mask * (1.0 - in_seam) + gradient[np.newaxis, :] * in_seam
+    return mask.astype(np.float32)
 
 # ============================================================================
 # Quick demo — run as: python laplacian_blender2.py  (A1 + A2)
