@@ -79,9 +79,7 @@ class FeatureMatcher:
         return pts_a, pts_b
 
 
-# ════════════════════════════════════════════════════════════════════════════
-# Visualization Utility
-# ════════════════════════════════════════════════════════════════════════════
+
 
 def visualize_matches(
     image_a: np.ndarray,
