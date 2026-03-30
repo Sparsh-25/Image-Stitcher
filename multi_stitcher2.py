@@ -8,27 +8,7 @@ from image_stitcher1 import ImageStitcher
 from laplacian_blender2 import match_exposure, build_blend_mask, LaplacianBlender
 
 
-# ============================================================================
-# B1 — Load N Images in Order
-# ============================================================================
-# Loads a list of image file paths left-to-right, validates each one,
-# and returns a list of BGR arrays. Exits loudly if any file is missing
-# or corrupt — silent None from cv2.imread is a common hidden bug.
-# ============================================================================
-
 def load_images(paths: list) -> list:
-    """
-    Load and validate a list of image paths.
-
-    Args:
-        paths: Ordered list of file paths (left to right).
-
-    Returns:
-        List of BGR uint8 arrays, same order as paths.
-
-    Raises:
-        SystemExit if any image fails to load.
-    """
     images = []
     for path in paths:
         img = cv2.imread(path)
@@ -41,17 +21,6 @@ def load_images(paths: list) -> list:
     return images
 
 
-# ============================================================================
-# B2 — Pairwise Homography Chain
-# ============================================================================
-# For N images, compute N-1 pairwise homographies:
-#   H[0] maps img[0] -> img[1]
-#   H[1] maps img[1] -> img[2]
-#   ...
-#   H[k] maps img[k] -> img[k+1]
-#
-# Each pair goes through SIFT + Lowe's Ratio Test + MAGSAC++.
-# ============================================================================
 
 def compute_pairwise_homographies(
     images: list,
@@ -96,39 +65,13 @@ def compute_pairwise_homographies(
     return homographies
 
 
-# ============================================================================
-# B3 — Global Canvas Computation
-# ============================================================================
-# Chain the pairwise homographies to get the global transform for each image
-# relative to image[0]'s coordinate frame (anchored at image 0).
-#
-# H_global[0] = Identity  (image 0 stays put)
-# H_global[1] = H[0]
-# H_global[2] = H[0] @ H[1]   (apply H[0] first, then H[1])
-#   ...
-# H_global[k] = H[0] @ H[1] @ ... @ H[k-1]
-#
-# Then project all 4 corners of all N images through their global H,
-# compute the union bounding box, and apply a translation offset T so
-# no coordinates are negative.
-# ============================================================================
+
 
 def compute_global_canvas(
     images: list,
     homographies: list
 ) -> tuple:
-    """
-    Compute global homographies and canvas size for N images.
 
-    Anchors at the MIDDLE image so cumulative scale distortion is symmetric.
-    With poor images having 1.3x scale per pair, anchoring at image 0 causes
-    1.32^(N-1) cumulative scale on the far image. Center anchoring caps it at
-    max 1.32^(N//2) which is significantly smaller.
-
-    H_global[anchor] = Identity
-    H_global[k < anchor] = inv(H[k]) @ inv(H[k+1]) @ ... @ inv(H[anchor-1])
-    H_global[k > anchor] = H[anchor] @ H[anchor+1] @ ... @ H[k-1]
-    """
     N      = len(images)
     anchor = N // 2   # middle image index
 
@@ -186,20 +129,7 @@ def warp_and_blend_all(
     T: np.ndarray,
     num_blend_levels: int = 3   # kept for API compat but unused
 ) -> np.ndarray:
-    """
-    Warp all images onto the global canvas and blend using weighted accumulation.
 
-    Blend model:
-        result(x) = sum_i( img_i(x) * w_i(x) ) / sum_i( w_i(x) )
-
-    Weight w_i(x) for each pixel is computed via distance transform from that
-    image's valid-pixel boundary. Pixels far from the edge get high weight;
-    pixels near the edge get low weight. This gives seamless smooth blending
-    at overlaps without any explicit seam mask, and treats all images uniformly
-    (no special k==0 case, no order dependency).
-
-    Accumulation is in float32 throughout; uint8 cast only at the end.
-    """
     anchor    = len(images) // 2              # center image is exposure reference
     ref_image = images[anchor]
 
@@ -251,19 +181,7 @@ def warp_and_blend_all(
 
 
 def crop_bounding_box(panorama: np.ndarray) -> np.ndarray:
-    """
-    Crop panorama to the bounding box of non-black pixels.
 
-    Faster than LIR and retains maximum image area.
-    May include small black triangles from warp gaps at corners —
-    acceptable for multi-image panoramas where the dominant content is valid.
-
-    Args:
-        panorama: BGR uint8 canvas with black padding.
-
-    Returns:
-        Cropped BGR uint8 image.
-    """
     gray  = cv2.cvtColor(panorama, cv2.COLOR_BGR2GRAY)
     rows  = np.any(gray > 5, axis=1)   # (H,) — True for rows with content
     cols  = np.any(gray > 5, axis=0)   # (W,) — True for cols with content
@@ -277,9 +195,6 @@ def crop_bounding_box(panorama: np.ndarray) -> np.ndarray:
     return panorama[r0:r1 + 1, c0:c1 + 1]
 
 
-# ============================================================================
-# B6 — Standalone Demo
-# ============================================================================
 
 if __name__ == "__main__":
     import sys

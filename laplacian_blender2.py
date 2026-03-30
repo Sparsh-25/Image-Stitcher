@@ -3,38 +3,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-# ============================================================================
-# A1 — Exposure Matching
-# ============================================================================
-# WHY: After warping Image A into Image B's frame, both images may have
-# different overall brightness/white-balance because they were taken with
-# slightly different auto-exposure settings. Even perfect geometry produces
-# a visible seam if the pixel values on either side don't match.
-#
-# HOW (Histogram Matching):
-#   1. Work in YCrCb colorspace so we only adjust luminance (Y channel),
-#      leaving the colours (Cr, Cb) unchanged.
-#   2. Compute the Cumulative Distribution Function (CDF) of Y in both images.
-#   3. Build a 256-entry LUT: for each intensity value i in src,
-#      find the intensity j in ref whose CDF(j) == CDF_src(i).
-#      This is called "histogram specification" or "histogram matching".
-#   4. Apply the LUT to src's Y channel.
-# ============================================================================
 
 def match_exposure(src: np.ndarray, ref: np.ndarray) -> np.ndarray:
-    """
-    Match the luminance histogram of `src` to that of `ref`.
 
-    Operates only on the Y (luminance) channel in YCrCb space, so
-    colours (Cr, Cb) are not affected — only overall brightness is adjusted.
-
-    Args:
-        src: BGR image to adjust (Image A, warped onto canvas).
-        ref: BGR reference image whose brightness to match (Image B).
-
-    Returns:
-        BGR image with src's brightness matched to ref. Same shape as src.
-    """
     # Convert both to YCrCb.
     src_ycrcb = cv2.cvtColor(src, cv2.COLOR_BGR2YCrCb)
     ref_ycrcb = cv2.cvtColor(ref, cv2.COLOR_BGR2YCrCb)
@@ -65,25 +36,7 @@ def match_exposure(src: np.ndarray, ref: np.ndarray) -> np.ndarray:
     return cv2.cvtColor(result_ycrcb, cv2.COLOR_YCrCb2BGR)
 
 
-# ============================================================================
-# A2 — Gradient Blend Mask
-# ============================================================================
-# WHY: The Laplacian pyramid needs a float32 mask that tells it how much of
-# each image to take at each pixel.
-#   mask = 0.0  → show 100% Image A
-#   mask = 1.0  → show 100% Image B
-#   mask = 0.5  → 50/50 blend
-#
-# WHY GRADIENT (not binary 0/1)?
-# A hard 0→1 step at the seam boundary is still a sharp edge at the finest
-# pyramid level. The pyramid blurs it at coarser levels, but Level 0 (full
-# resolution) still sees the jump → visible seam line.
-# A gradient means even Level 0 gets a smooth function → seam invisible.
-#
-# WHY NUMPY (not for-loop)?
-# The canvas can be 4000–6000 px wide. A Python for-loop over columns
-# takes 4–5 seconds. NumPy broadcasting does it in under 10 ms.
-# ============================================================================
+
 
 def build_blend_mask(
     canvas_shape: tuple,
@@ -91,16 +44,7 @@ def build_blend_mask(
     canvas_b: np.ndarray,
     seam_band_px: int = 0,
 ) -> np.ndarray:
-    """
-    Build a float32 blend mask for the panorama canvas.
-
-    Finds the optimal seam column (minimum mean absolute difference over the
-    overlap zone, fully vectorised) and places a narrow gradient there.
-    seam_band_px=0 gives a hard binary cut at the optimal column.
-
-    M = 0 in A-only zone, 1 in B-only zone.
-    Direction (gradient 0->1 or 1->0) is auto-detected.
-    """
+   
     H, W = canvas_shape[:2]
 
     gray_a = cv2.cvtColor(warped_a, cv2.COLOR_BGR2GRAY).astype(np.float32)
@@ -153,32 +97,7 @@ def build_blend_mask(
     mask = mask * (1.0 - in_seam) + gradient[np.newaxis, :] * in_seam
     return mask.astype(np.float32)
 
-# ============================================================================
-# Quick demo — run as: python laplacian_blender2.py  (A1 + A2)
-# ============================================================================
 
-
-# ============================================================================
-# A3 - Laplacian Pyramid Blend
-# ============================================================================
-# HOW IT WORKS:
-#   A Laplacian pyramid decomposes an image into frequency bands:
-#     L0 = finest detail (high frequency: edges, textures)
-#     L1 = medium structures
-#     L2..LN = coarse colour/brightness (low frequency)
-#
-#   We blend each band with a correspondingly blurred version of the mask:
-#     - At coarse levels (LN), the mask is heavily blurred -> wide colour transition
-#     - At fine levels (L0), the mask is narrow -> sharp detail preserved
-#
-#   Collapsing the blended pyramid back gives a seamless result at all scales.
-#
-# THE pyrUp RESIZE FIX:
-#   cv2.pyrDown then cv2.pyrUp is NOT a round-trip for odd-sized dimensions.
-#   A 4733px image pyrDown -> 2367px -> pyrUp -> 4734px (off by 1).
-#   This causes shape mismatch when computing L_k = G_k - pyrUp(G_{k+1}).
-#   Fix: after every pyrUp, explicitly resize to match G_k's exact dimensions.
-# ============================================================================
 
 class LaplacianBlender:
     """
@@ -229,10 +148,7 @@ class LaplacianBlender:
         return laplacian
 
     def _collapse_pyramid(self, laplacian_pyr: list) -> np.ndarray:
-        """
-        Reconstruct full-resolution image by collapsing the Laplacian pyramid.
-        Start from coarsest level and iteratively add finer detail.
-        """
+
         result = laplacian_pyr[-1]
         for k in range(self.num_levels - 1, -1, -1):
             result = cv2.pyrUp(result)
@@ -249,17 +165,7 @@ class LaplacianBlender:
         img_b: np.ndarray,
         mask:  np.ndarray
     ) -> np.ndarray:
-        """
-        Blend img_a and img_b using the Laplacian pyramid.
-
-        Args:
-            img_a:  First image (BGR uint8 or float32), placed on canvas.
-            img_b:  Second image (BGR uint8 or float32), placed on canvas.
-            mask:   float32 (H, W) blend mask — 0=img_a, 1=img_b, gradient in overlap.
-
-        Returns:
-            Blended BGR uint8 image of same shape as img_a / img_b.
-        """
+        
         # Ensure float32 inputs for the pyramid arithmetic.
         a = img_a.astype(np.float32)
         b = img_b.astype(np.float32)
@@ -292,9 +198,7 @@ class LaplacianBlender:
         # Clip and convert back to uint8.
         return np.clip(result, 0, 255).astype(np.uint8)
 
-# ============================================================================
-# Standalone Demo  (run as: python laplacian_blender2.py)
-# ============================================================================
+
 
 if __name__ == "__main__":
     import sys
