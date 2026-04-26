@@ -213,3 +213,24 @@ H_global[1]  : (0.0, 0.0)         ← anchor (middle image)
 H_global[2]  : (+852.9, +81.2)    ← right of anchor
 ```
 ---
+
+flowchart TD
+    A[Load Dataset<br/>3 Images Detected] --> B[Select Anchor Image<br/>middle.jpg]
+
+    B --> C[Process Left Image<br/>left_room.jpg]
+    C --> C1[SIFT Keypoints<br/>4,201 detected]
+    C1 --> C2[Lowe's Ratio Test<br/>1,805 retained]
+    C2 --> C3[MAGSAC++<br/>88% inliers]
+    C3 --> C4[Warp to Canvas]
+
+    C4 --> D[Process Right Image<br/>right_room.jpg]
+    D --> D1[SIFT Keypoints<br/>3,922 detected]
+    D1 --> D2[Inverse Homography]
+    D2 --> D3[Warp to Canvas]
+
+    D3 --> E[Blending & Accumulation]
+    E --> E1[Exposure Matching (Y-Channel)]
+    E1 --> E2[Distance Transform Weights (float32)]
+
+    E2 --> F[Final Output<br/>5802 × 3150 Panorama]
+    F --> G[Success]
